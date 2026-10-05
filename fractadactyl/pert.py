@@ -28,15 +28,25 @@ def reference(c0, p):
     s = complex(1/(b*l*l))
     return Z, s
 
-@njit(parallel=True, fastmath=False, cache=True)
-def render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss):
+def render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need=None):
     """(dcx,dcy): view centre relative to the nucleus. Returns nu (-1 inside)
-    and distance estimate in pixels."""
+    and distance estimate in pixels. `need` (H x W bool) skips pixels nobody will see."""
+    if need is None:
+        need = np.ones((H, W), np.bool_)
+    return _render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need)
+
+
+@njit(parallel=True, fastmath=False, cache=True)
+def _render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need):
     p = Zr.shape[0]
     nu = np.empty((H, W, ss*ss)); de = np.empty((H, W, ss*ss))
     px = width / W; cr = np.cos(rot); sr = np.sin(rot)
     for j in prange(H):
         for i in range(W):
+            if not need[j, i]:
+                for k in range(ss*ss):
+                    nu[j, i, k] = -1.0; de[j, i, k] = 0.0
+                continue
             for k in range(ss*ss):
                 ox = (i + (k % ss + 0.5)/ss - W/2) * px
                 oy = (j + (k // ss + 0.5)/ss - H/2) * px
