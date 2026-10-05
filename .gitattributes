@@ -6,3 +6,4 @@
 /.codex/.gitignore text eol=lf
 *.ishoo binary
 .ishoo/** binary
+*.mp4 filter=lfs diff=lfs merge=lfs -text

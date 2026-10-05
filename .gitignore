@@ -2,3 +2,6 @@
 **/.ishoo/*.local.toml
 **/.ishoo/cache/
 **/.ishoo/worktrees/
+__pycache__/
+*.pyc
+out/
