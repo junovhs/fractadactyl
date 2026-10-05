@@ -12,8 +12,8 @@ def soft_mask(cen, w, W, H, inner=0.6):
     t = np.clip((1 - r) / (1 - inner), 0, 1)
     return t*t*(3 - 2*t)                       # smoothstep feather, inner 60% solid
 
-def candidates(budget_s=600, pmax=2500):
-    rng = random.Random(1); out = {}; t0 = time.time()
+def candidates(budget_s=600, pmax=2500, seed=1):
+    rng = random.Random(seed); out = {}; t0 = time.time()
     while time.time() - t0 < budget_s:
         rad = 10 ** rng.uniform(-5.5, -1.5)
         ang = rng.uniform(0, 2*np.pi)

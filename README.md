@@ -9,6 +9,7 @@ wherever a viewer can't tell. See [docs/FINDINGS.md](docs/FINDINGS.md).
   - `minis.py` find + validate island minibrots (`python -m fractadactyl.minis`)
   - `swap.py` local-coordinate worlds and swap compositing helpers
   - `twins.py` twin candidate search and mismatch scoring
+  - `library.py` persistent twin library: `build` once, `pick` a matched twin in seconds
   - `color.py` placeholder palette (log-iteration hue + distance-estimate shading)
   - `mb.py` plain double renderer and ball-period helper
 - `experiments/` — the scripts that produced each result
@@ -20,4 +21,5 @@ wherever a viewer can't tell. See [docs/FINDINGS.md](docs/FINDINGS.md).
 pip install -r requirements.txt
 git lfs pull
 python -m fractadactyl.minis
+python -m fractadactyl.library build --budget 0 --seed-from data/poc2_twins.pkl   # local twin library (data/twins.npz, not committed)
 ```
