@@ -1,0 +1,2 @@
+fake = clip_2 (swap at frame 143, t = 4.77s)
+mapping: clip_1 = A, clip_2 = B
