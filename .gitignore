@@ -7,3 +7,5 @@ __pycache__/
 out/
 .venv/
 data/twins.npz
+target/
+data/twins.json
