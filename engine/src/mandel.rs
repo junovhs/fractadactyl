@@ -32,9 +32,13 @@ pub fn nucleus(guess: &Mpc, p: usize, prec: usize) -> Result<Mpc, &'static str> 
     for _ in 0..80 {
         let mut z = Mpc::zero(prec);
         let mut dz = Mpc::zero(prec);
-        for _ in 0..p {
+        for i in 0..p {
             dz = z.mul(&dz).scale(2.0).add(&one);
             z = z.sqr().add(&c);
+            // an escaping orbit squares itself past any exponent range: this guess is bad
+            if i % 32 == 31 && !(z.abs() < 1e50) {
+                return Err("orbit escaped");
+            }
         }
         if dz.abs() == 0.0 {
             return Err("zero derivative");

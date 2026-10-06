@@ -10,7 +10,7 @@
 //!
 //! Per-frame cost is proportional to the current world's period and to the period of the
 //! mini being approached, so both are capped (DEC-04).
-use crate::color::{colorize, NuMap, IDENTITY};
+use crate::color::{brightness, colorize, NuMap, IDENTITY};
 use crate::library::{self, Twin};
 use crate::mandel::{ball_period, nucleus, World, PATCH_C, PATCH_R};
 use crate::minis;
@@ -23,7 +23,6 @@ use std::time::Instant;
 
 const SEAM_R: (f64, f64) = (1.5, 3.9); // seam may wander between these radii (mini-local)
 const SEAM_N: usize = 512; // seam-cost render size (pixels across the patch)
-const FREQ: f64 = 1.5;
 
 fn dive_points() -> Vec<C64> {
     let base = [
@@ -125,8 +124,8 @@ pub fn plan(lib: Option<&[Twin]>, o: &PlanOpts, log: &mut dyn FnMut(String)) -> 
         let next = if k + 1 < o.swaps { find_with_fallback(&b, &mut rng, o) } else { None };
         last_p = next.as_ref().map(|n| n.0).unwrap_or(dive_points()[0]);
         log(format!(
-            "  seg {k}: world p={} |s|={:.1e} -> mini p={} |sigma|={:.1e}  twin p={} |s|={:.1e} mismatch {:.2}%  ({:.0}s)",
-            x.p, x.s.norm(), m.w.p, m.sigma.norm(), b.p, b.s.norm(), err, t0.elapsed().as_secs_f64()
+            "  seg {k}: world p={} |s|={:.1e} -> mini p={} |sigma|={:.1e}  twin p={} |s|={:.1e} mismatch {:.2}% gain {:.2}  ({:.0}s)",
+            x.p, x.s.norm(), m.w.p, m.sigma.norm(), b.p, b.s.norm(), err, ab.2, t0.elapsed().as_secs_f64()
         ));
         segs.push(Seg { x: x.clone(), m: Some(m), b: Some(b.clone()), ab, err, q: C64::new(0.0, 0.0) });
         x = b;
@@ -147,11 +146,12 @@ pub fn plan(lib: Option<&[Twin]>, o: &PlanOpts, log: &mut dyn FnMut(String)) -> 
 }
 
 fn compose(cmap: NuMap, ab: NuMap) -> NuMap {
-    (cmap.0 * ab.0, cmap.0 * ab.1 + cmap.1)
+    (cmap.0 * ab.0, cmap.0 * ab.1 + cmap.1, cmap.2 * ab.2)
 }
 
 /// Optimal seam (panorama-stitching style): a closed curve r(phi) around the incoming mini,
-/// in its local polar coords, along which X and the twin B look most alike. Computed once
+/// in its local polar coords, along which X and the twin B look most alike (hue and
+/// edge-shading brightness). Computed once
 /// per swap, so it is fixed in world space and zooms with it.
 pub fn seam(seg: &Seg, cmap: NuMap, maxmul: usize, log: &mut dyn FnMut(String)) -> (Vec<f64>, Vec<f64>) {
     let (n_ang, n_rad, bend) = (720usize, 96usize, 0.05);
@@ -161,10 +161,11 @@ pub fn seam(seg: &Seg, cmap: NuMap, maxmul: usize, log: &mut dyn FnMut(String)) 
     let cmap_b = compose(cmap, seg.ab);
     let sx = seg.x.render(m.cm + m.sigma * PATCH_C, 2.0 * r_max * m.sigma.norm(), m.sigma.arg(), n, n, 1, maxmul, None);
     let sb = b.render(PATCH_C, 2.0 * r_max, 0.0, n, n, 1, maxmul, None);
-    let hue = |nu: f64, ab: NuMap| if nu > 0.0 { Some((ab.0 * nu.ln() + ab.1) * FREQ) } else { None };
+    let freq = crate::color::Look::default().freq;
+    let hue = |nu: f64, ab: NuMap| if nu > 0.0 { Some((ab.0 * nu.ln() + ab.1) * freq) } else { None };
     let diff: Vec<f64> = (0..n * n)
         .map(|i| match (hue(sx.nu[i], cmap), hue(sb.nu[i], cmap_b)) {
-            (Some(a), Some(b)) => 1.0 - (2.0 * PI * (a - b)).cos(),
+            (Some(a), Some(b)) => 1.0 - (2.0 * PI * (a - b)).cos() + 2.0 * (brightness(sx.de[i], cmap) - brightness(sb.de[i], cmap_b)).abs(),
             (None, None) => 0.0,
             _ => 4.0, // inside vs outside: worst
         })
@@ -268,11 +269,12 @@ pub struct RunOpts {
     pub tail_s: f64,
     pub maxmul: usize,
     pub budget_s: Option<f64>,
+    pub look: crate::color::Look,
 }
 
 impl Default for RunOpts {
     fn default() -> Self {
-        RunOpts { w: 640, h: 360, ss: 2, fps: 30.0, dec_per_s: 0.6, swap_px: 6.0, fade: 10, tail_s: 3.0, maxmul: 5000, budget_s: None }
+        RunOpts { w: 640, h: 360, ss: 2, fps: 30.0, dec_per_s: 0.15, swap_px: 6.0, fade: 10, tail_s: 3.0, maxmul: 5000, budget_s: None, look: crate::color::Look::default() }
     }
 }
 
@@ -365,12 +367,12 @@ pub fn run(
             // only render each world where it is visible: X outside the solid patch, B inside
             let need_x: Option<Vec<bool>> = mask.as_ref().map(|m| m.iter().map(|&v| v < 1.0).collect());
             let sx = seg.x.render(center, w, theta, o.w, o.h, o.ss, o.maxmul, need_x.as_deref());
-            let mut rgb = colorize(&sx, cmap, FREQ);
+            let mut rgb = colorize(&sx, cmap, &o.look);
             if let Some(m) = &mask {
                 let cmap_b = compose(cmap, seg.ab);
                 let need_b: Vec<bool> = m.iter().map(|&v| v > 0.0).collect();
                 let sb = seg.b.as_ref().unwrap().render(cam_b.0, cam_b.1, cam_b.2, o.w, o.h, o.ss, o.maxmul, Some(&need_b));
-                let rgb_b = colorize(&sb, cmap_b, FREQ);
+                let rgb_b = colorize(&sb, cmap_b, &o.look);
                 for (i, &mm) in m.iter().enumerate() {
                     for c in 0..3 {
                         let v = rgb[i * 3 + c] as f64 * (1.0 - mm) + rgb_b[i * 3 + c] as f64 * mm;

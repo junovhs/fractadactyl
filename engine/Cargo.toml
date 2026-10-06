@@ -21,6 +21,7 @@ rand = "0.8"
 rand_chacha = "0.3"
 plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ab_glyph"] }
 clap = { version = "4.6.7", features = ["derive"] }
+png = "0.18.1"
 
 [profile.release]
 debug = false

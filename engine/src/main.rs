@@ -36,10 +36,10 @@ enum Cmd {
         /// twin period limit: bounds every frame's cost (DEC-04)
         #[arg(long, default_value_t = 64)]
         max_twin_p: usize,
-        /// dive-target period limit: bounds the approach cost and keeps swaps between
-        /// minis of similar lace density (DEC-04)
-        #[arg(long, default_value_t = 600)]
-        max_dive_p: usize,
+        /// dive-target period limit (default 4x --max-twin-p): bounds the approach cost and
+        /// keeps swaps between minis of similar lace density (DEC-04)
+        #[arg(long)]
+        max_dive_p: Option<usize>,
         #[arg(long, default_value = "tests/blind/round4")]
         out: PathBuf,
         #[arg(long, default_value = library::LIB_PATH)]
@@ -48,6 +48,62 @@ enum Cmd {
         #[arg(long, default_value_t = 2400.0)]
         control_budget: f64,
         /// no terminal / live-frame windows
+        #[arg(long)]
+        no_live: bool,
+    },
+    /// Full-resolution stills of a few classic spots in the current look (seconds each).
+    Stills {
+        #[arg(long, default_value = "tests/look")]
+        out: PathBuf,
+        #[arg(long, default_value_t = 1280)]
+        w: usize,
+        #[arg(long, default_value_t = 720)]
+        h: usize,
+        #[arg(long, default_value_t = 3)]
+        ss: usize,
+        /// look preset: umber, bone, copper, twilight, ember, umber-smooth
+        #[arg(long, default_value = "umber")]
+        look: String,
+        /// scallop bands per e-fold of iteration count (overrides the preset)
+        #[arg(long)]
+        bands: Option<f64>,
+        /// scallop relief strength (overrides the preset)
+        #[arg(long)]
+        depth: Option<f64>,
+        /// render only spots whose name contains this
+        #[arg(long)]
+        only: Option<String>,
+    },
+    /// A straight zoom in the main set toward a point (look tests in motion).
+    Zoom {
+        #[arg(long, default_value_t = -0.743643887037151)]
+        re: f64,
+        #[arg(long, default_value_t = 0.131825904205330)]
+        im: f64,
+        #[arg(long, default_value_t = 3e-5)]
+        from: f64,
+        #[arg(long, default_value_t = 3e-8)]
+        to: f64,
+        /// zoom speed in decades (10x) per second; long YouTube zooms run ~0.1-0.2
+        #[arg(long, default_value_t = 0.15)]
+        speed: f64,
+        #[arg(long, default_value_t = 960)]
+        w: usize,
+        #[arg(long, default_value_t = 540)]
+        h: usize,
+        #[arg(long, default_value_t = 2)]
+        ss: usize,
+        #[arg(long, default_value = "umber")]
+        look: String,
+        #[arg(long)]
+        bands: Option<f64>,
+        #[arg(long)]
+        depth: Option<f64>,
+        /// snap to the nucleus of the mini nearest the point and end with it filling the frame
+        #[arg(long)]
+        snap: bool,
+        #[arg(long, default_value = "tests/look/zoom")]
+        out: PathBuf,
         #[arg(long)]
         no_live: bool,
     },
@@ -241,7 +297,9 @@ fn main() -> Result<()> {
             if preview {
                 (ro.w, ro.h) = (320, 180);
             }
-            let po = PlanOpts { swaps, seed, max_twin_p, max_dive_p, sigma_range: (1e-6, 1e-3) };
+            let max_dive_p = max_dive_p.unwrap_or(4 * max_twin_p);
+            // larger minis (relative size up to 1e-2) have lower periods: closer to the twins'
+            let po = PlanOpts { swaps, seed, max_twin_p, max_dive_p, sigma_range: (1e-6, 1e-2) };
             let lib = library::load(&lib).with_context(|| format!("loading {lib} (export it with data/export_twins.py)"))?;
 
             eprintln!("== planning chain (twins, p <= {max_twin_p}, dive targets p <= {max_dive_p})");
@@ -277,6 +335,86 @@ fn main() -> Result<()> {
             chart(&series, &out.join("timing.png"))?;
             std::fs::write(out.join("summary.txt"), lines.join("\n") + "\n")?;
             println!("{}", lines.join("\n"));
+        }
+        Cmd::Stills { out, w, h, ss, look, bands, depth, only } => {
+            let mut look = fractadactyl::color::Look::by_name(&look).context("unknown look")?;
+            look.bands = bands.unwrap_or(look.bands);
+            look.depth = depth.unwrap_or(look.depth);
+            std::fs::create_dir_all(&out)?;
+            let spots: [(&str, f64, f64, f64, f64); 6] = [
+                ("01-whole-set", -0.75, 0.0, 3.2, 0.0),
+                ("02-seahorse-valley", -0.7445, 0.1215, 0.03, 0.0),
+                ("03-seahorse-spiral", -0.743643887037151, 0.131825904205330, 2.0e-5, 0.0),
+                ("04-seahorse-deep", -0.7436438870371587, 0.1318259042053120, 2.0e-9, 0.0),
+                ("05-elephant-valley", 0.2925, 0.0150, 0.006, 0.0),
+                ("06-mini-west", -1.76877883, -0.00173895, 2.0e-6, 0.0),
+            ];
+            let world = mandel::World::main();
+            for (name, re, im, wd, th) in spots.into_iter().filter(|s| only.as_ref().is_none_or(|o| s.0.contains(o.as_str()))) {
+                let t = std::time::Instant::now();
+                let s = world.render(C64::new(re, im), wd, th, w, h, ss, 20000, None);
+                let rgb = fractadactyl::color::colorize(&s, fractadactyl::color::IDENTITY, &look);
+                let path = out.join(format!("{name}.png"));
+                fractadactyl::color::save_png(&path, w, h, &rgb)?;
+                eprintln!("{name}: {:.1}s -> {}", t.elapsed().as_secs_f64(), path.display());
+            }
+        }
+        Cmd::Zoom { mut re, mut im, from, mut to, speed, w, h, ss, look, bands, depth, snap, out, no_live } => {
+            // Without --snap: the main set around (re, im), widths in c units. With --snap: the
+            // nearest visible mini's own world (perturbation around its nucleus, sharp at any
+            // depth), camera on the mini's middle, widths in that world's local units.
+            let mut world = mandel::World::main();
+            let (mut from, mut wscale) = (from, 1.0);
+            if snap {
+                let c = Mpc::from_c64(C64::new(re, im), 256);
+                // widest search radius whose period converges to a real nucleus = biggest mini
+                let (p, n) = [0.5, 0.2, 0.05, 0.01]
+                    .iter()
+                    .find_map(|&f| {
+                        let p = mandel::ball_period(&c, from * f, 200_000)?;
+                        mandel::nucleus(&c, p, 256).ok().map(|n| (p, n))
+                    })
+                    .context("no mini near that point")?;
+                world = mandel::World::from_nucleus(n.clone(), p);
+                eprintln!("snapped to mini p={p} at {} size {:.2e}", n.to_string(), world.s.norm());
+                wscale = world.s.norm();
+                (re, im) = (-0.75, 0.0);
+                from /= wscale;
+                to = 4.0;
+            }
+            let mut look = fractadactyl::color::Look::by_name(&look).context("unknown look")?;
+            look.bands = bands.unwrap_or(look.bands);
+            look.depth = depth.unwrap_or(look.depth);
+            std::fs::create_dir_all(&out)?;
+            let frames = ((from / to).log10() / speed * 30.0).round().max(2.0) as usize;
+            let mut enc = encoder(w, h, &out.join("zoom.mp4"), false)?;
+            let mut live = Live::start("zoom", &out, w, h, !no_live)?;
+            let t0 = std::time::Instant::now();
+            live.line(&format!("== zoom: {frames} frames at {w}x{h} ss{ss}, width {:.1e} -> {:.1e}", from * wscale, to * wscale));
+            for k in 0..frames {
+                let t = std::time::Instant::now();
+                let wd = from * (to / from).powf(k as f64 / (frames - 1) as f64);
+                let s = world.render(C64::new(re, im), wd, 0.0, w, h, ss, 20000, None);
+                let rgb = fractadactyl::color::colorize(&s, fractadactyl::color::IDENTITY, &look);
+                enc.stdin.as_mut().unwrap().write_all(&rgb)?;
+                live.frame(&rgb);
+                if k == frames / 2 {
+                    fractadactyl::color::save_png(&out.join("middle.png"), w, h, &rgb)?;
+                }
+                let el = t0.elapsed().as_secs_f64();
+                let frac = (k + 1) as f64 / frames as f64;
+                let bar: String = (0..30).map(|i| if (i as f64) < frac * 30.0 { '#' } else { '.' }).collect();
+                let wd = wd * wscale;
+                live.line(&format!("[{bar}] {:3.0}%  frame {k:4}/{frames}  w={wd:.2e}  {:5.2}s/f  elapsed {}  ETA ~{}",
+                    frac * 100.0, t.elapsed().as_secs_f64(), fmt_dur(el), fmt_dur(el / frac - el)));
+            }
+            drop(enc.stdin.take());
+            enc.wait()?;
+            if let Some(mut p) = live.player.take() {
+                drop(p.stdin.take());
+                std::thread::spawn(move || p.wait());
+            }
+            live.line(&format!("== DONE zoom: {} in {}", out.join("zoom.mp4").display(), fmt_dur(t0.elapsed().as_secs_f64())));
         }
         Cmd::Parity { c0, p, cre, cim, w, theta, wpx, hpx, ss, out } => {
             let world = if c0 == "main" {

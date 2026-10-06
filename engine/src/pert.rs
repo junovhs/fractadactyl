@@ -7,13 +7,16 @@ use rayon::prelude::*;
 const BAIL: f64 = 1e10;
 
 /// Per-pixel samples: `nu` smooth iteration count (-1 inside), `de` distance estimate in
-/// pixels. Indexed [(j * w + i) * ss^2 + k].
+/// pixels, `ux, uy` the unit surface normal z/(dz/dc) in *screen* orientation (for 3D
+/// slope lighting). Indexed [(j * w + i) * ss^2 + k].
 pub struct Samples {
     pub w: usize,
     pub h: usize,
     pub ss: usize,
     pub nu: Vec<f64>,
     pub de: Vec<f64>,
+    pub ux: Vec<f32>,
+    pub uy: Vec<f32>,
 }
 
 impl Samples {
@@ -78,9 +81,10 @@ fn attracting(zr: &[f64], zi: &[f64], m0: usize, mut x0r: f64, mut x0i: f64, ar:
     false
 }
 
-/// Iterate one sample; returns (nu, de_px).
+/// Iterate one sample; returns (nu, de_px, normal re, normal im) with the normal in c-plane
+/// orientation.
 #[inline]
-fn sample(zr: &[f64], zi: &[f64], ar: f64, ai: f64, maxiter: usize, px: f64) -> (f64, f64) {
+fn sample(zr: &[f64], zi: &[f64], ar: f64, ai: f64, maxiter: usize, px: f64) -> (f64, f64, f64, f64) {
     let p = zr.len();
     let (mut xr, mut xi) = (0.0f64, 0.0f64); // delta z
     let (mut dr, mut di) = (0.0f64, 0.0f64); // dz/dc
@@ -139,9 +143,14 @@ fn sample(zr: &[f64], zi: &[f64], ar: f64, ai: f64, maxiter: usize, px: f64) -> 
         let lz = 0.5 * r2.ln();
         let nu = n as f64 + 1.0 - (lz / 2f64.ln()).ln() / 2f64.ln();
         let de = r2.sqrt() * lz / (dr * dr + di * di).sqrt() / px;
-        (nu, de)
+        // normal: u = z / (dz/dc), normalised
+        let (fr, fi) = (zr[m] + xr, zi[m] + xi);
+        let d2 = dr * dr + di * di;
+        let (ur, ui) = ((fr * dr + fi * di) / d2, (fi * dr - fr * di) / d2);
+        let un = (ur * ur + ui * ui).sqrt().max(1e-300);
+        (nu, de, ur / un, ui / un)
     } else {
-        (-1.0, 0.0)
+        (-1.0, 0.0, 0.0, 0.0)
     }
 }
 
@@ -156,7 +165,13 @@ pub fn render(z: &[C64], dc: C64, width: f64, rot: f64, w: usize, h: usize, maxi
     let (cr, sr) = (rot.cos(), rot.sin());
     let mut nu = vec![-1.0; w * h * n];
     let mut de = vec![0.0; w * h * n];
-    nu.par_chunks_mut(w * n).zip(de.par_chunks_mut(w * n)).enumerate().for_each(|(j, (nrow, drow))| {
+    let mut ux = vec![0.0f32; w * h * n];
+    let mut uy = vec![0.0f32; w * h * n];
+    nu.par_chunks_mut(w * n)
+        .zip(de.par_chunks_mut(w * n))
+        .zip(ux.par_chunks_mut(w * n).zip(uy.par_chunks_mut(w * n)))
+        .enumerate()
+        .for_each(|(j, ((nrow, drow), (xrow, yrow)))| {
         for i in 0..w {
             if let Some(nd) = need {
                 if !nd[j * w + i] {
@@ -168,11 +183,14 @@ pub fn render(z: &[C64], dc: C64, width: f64, rot: f64, w: usize, h: usize, maxi
                 let oy = (j as f64 + ((k / ss) as f64 + 0.5) / ss as f64 - h as f64 / 2.0) * px;
                 let ar = dc.re + ox * cr - oy * sr; // Delta c
                 let ai = dc.im + ox * sr + oy * cr;
-                let (a, b) = sample(&zr, &zi, ar, ai, maxiter, px);
+                let (a, b, ur, ui) = sample(&zr, &zi, ar, ai, maxiter, px);
                 nrow[i * n + k] = a;
                 drow[i * n + k] = b;
+                // rotate the normal from c-plane into screen orientation
+                xrow[i * n + k] = (ur * cr + ui * sr) as f32;
+                yrow[i * n + k] = (ui * cr - ur * sr) as f32;
             }
         }
     });
-    Samples { w, h, ss, nu, de }
+    Samples { w, h, ss, nu, de, ux, uy }
 }

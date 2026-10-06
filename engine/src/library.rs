@@ -1,6 +1,6 @@
 //! Twin library (LIB-01): validated island minis with a cheap lace signature; `pick` ranks
 //! by signature distance, then fully scores the top K with `mismatch`.
-use crate::color::{colorize, map_nu, NuMap};
+use crate::color::{colorize, NuMap};
 use crate::mandel::{nucleus, World, PATCH_C, PATCH_R};
 use crate::mp::{bits_for, Mpc};
 use num_complex::Complex64 as C64;
@@ -74,8 +74,29 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
     sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo as f64)
 }
 
+/// Brightness continuity: a gain g on B's distance estimate so its edge shading has the
+/// same median level as A's (log de quantiles 10..90, averaged difference).
+pub fn fit_de_gain(de_a: &[f64], de_b: &[f64], nu_a: &[f64], nu_b: &[f64], mask: &[f64]) -> f64 {
+    let (mut la, mut lb): (Vec<f64>, Vec<f64>) = (Vec::new(), Vec::new());
+    for i in 0..mask.len() {
+        if mask[i] > 0.5 && nu_a[i] > 0.0 && de_a[i] > 0.0 {
+            la.push(de_a[i].ln());
+        }
+        if mask[i] > 0.5 && nu_b[i] > 0.0 && de_b[i] > 0.0 {
+            lb.push(de_b[i].ln());
+        }
+    }
+    if la.len() < 10 || lb.len() < 10 {
+        return 1.0;
+    }
+    la.sort_by(f64::total_cmp);
+    lb.sort_by(f64::total_cmp);
+    let d: f64 = (1..10).map(|i| percentile(&la, 10.0 * i as f64) - percentile(&lb, 10.0 * i as f64)).sum::<f64>() / 9.0;
+    d.exp().clamp(0.05, 20.0)
+}
+
 /// Appearance-only colour continuity: log(nuA) ~ a log(nuB) + b, fitted on quantiles.
-pub fn fit_nu_map(nu_a: &[f64], nu_b: &[f64], mask: &[f64]) -> NuMap {
+pub fn fit_nu_map(nu_a: &[f64], nu_b: &[f64], mask: &[f64]) -> (f64, f64) {
     let (mut la, mut lb): (Vec<f64>, Vec<f64>) = (Vec::new(), Vec::new());
     for i in 0..mask.len() {
         if mask[i] > 0.5 && nu_a[i] > 0.0 && nu_b[i] > 0.0 {
@@ -106,18 +127,22 @@ pub fn mismatch(a: &World, b: &World) -> (f64, NuMap) {
         .iter()
         .map(|&wl| (a.render(PATCH_C, wl, 0.0, w, h, 2, 3000, None), b.render(PATCH_C, wl, 0.0, w, h, 2, 3000, None), soft_mask(wl, w, h, 0.6)))
         .collect();
-    let mean_nu = |s: &crate::pert::Samples| -> Vec<f64> { s.nu.chunks(s.n()).map(|c| c.iter().sum::<f64>() / c.len() as f64).collect() };
-    let (mut na, mut nb, mut mk) = (Vec::new(), Vec::new(), Vec::new());
+    let mean = |v: &[f64], n: usize| -> Vec<f64> { v.chunks(n).map(|c| c.iter().sum::<f64>() / c.len() as f64).collect() };
+    let (mut na, mut nb, mut da, mut db, mut mk) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (sa, sb, m) in &fits {
-        na.extend(mean_nu(sa));
-        nb.extend(mean_nu(sb));
+        na.extend(mean(&sa.nu, sa.n()));
+        nb.extend(mean(&sb.nu, sb.n()));
+        da.extend(mean(&sa.de, sa.n()));
+        db.extend(mean(&sb.de, sb.n()));
         mk.extend(m);
     }
-    let ab = fit_nu_map(&na, &nb, &mk);
+    let (a, b0) = fit_nu_map(&na, &nb, &mk);
+    let ab = (a, b0, fit_de_gain(&da, &db, &na, &nb, &mk));
     let mut total = 0.0;
     for (sa, sb, m) in &fits {
-        let real = colorize(sa, (1.0, 0.0), 1.5);
-        let fake = colorize(sb, ab, 1.5);
+        let look = crate::color::Look::default();
+        let real = colorize(sa, crate::color::IDENTITY, &look);
+        let fake = colorize(sb, ab, &look);
         let mut acc = 0.0;
         for (i, mm) in m.iter().enumerate() {
             for c in 0..3 {
@@ -128,7 +153,6 @@ pub fn mismatch(a: &World, b: &World) -> (f64, NuMap) {
         }
         total += acc / (m.len() * 3) as f64 / 2.55;
     }
-    let _ = map_nu;
     (total / 3.0, ab)
 }
 
