@@ -16,7 +16,6 @@ from . import pert, minis, library
 from .color import colorize
 
 PATCH_C, PATCH_R = -0.75 + 0j, 4.0     # patch around a mini, in its own local coords
-INNER = 0.6                            # inner 60% of the patch is solid
 MAIN = dict(p=1, s=1 + 0j, Z=np.zeros(1, complex), c0=mp.mpc(0))
 _BASE_POINTS = [complex(-0.7436438870371587, 0.1318259042053120),  # seahorse valley (p=39 mini)
                 complex(-1.2537, 0.0384),                            # west tendril (p=41)
@@ -83,9 +82,13 @@ def _find_with_fallback(X, rng):
     return None, None
 
 
-def plan(n_swaps, lib=None, seed=0, log=print, budget_s=None):
+def plan(n_swaps, lib=None, seed=0, log=print, budget_s=None, max_twin_p=64):
     """Segments: world X, its sub-mini M, the twin B that replaces M, colour map B->M,
-    and the dive target Q (X-local) = where the next segment's dive point sits inside M."""
+    and the dive target Q (X-local) = where the next segment's dive point sits inside M.
+    Per-frame cost is proportional to the current world's period, so twins are limited to
+    period <= max_twin_p: that bounds the cost of every frame, however long the chain."""
+    if lib is not None and max_twin_p:
+        lib = [t for t in lib if t["p"] <= max_twin_p]
     rng = np.random.default_rng(seed)
     X = MAIN; segs = []; t0 = time.time()
     P, M = _find_with_fallback(X, rng)
@@ -105,6 +108,11 @@ def plan(n_swaps, lib=None, seed=0, log=print, budget_s=None):
         segs.append(dict(X=X, M=M, B=B, ab=ab, err=err, Q=Q))
         X, M = B, M_next
     segs.append(dict(X=X, M=None, B=None, ab=None, err=None, Q=P_next if segs else P))
+    # aim the whole chain at one nested point: segment k's target is segment k+1's target
+    # seen through M_k (B-local ~ M-local), so the zoom's fixed point never jumps at a handoff
+    for k in range(len(segs) - 2, -1, -1):
+        M = segs[k]["M"]
+        segs[k]["Q"] = M["CM"] + M["sigma"] * segs[k + 1]["Q"]
     return segs
 
 
@@ -114,14 +122,70 @@ def render_world(X, center, w, theta, W, H, ss, maxmul, need=None):
                        w * abs(X["s"]), np.angle(X["s"]) + theta, W, H, maxmul * X["p"], ss, need)
 
 
-def patch_weight(center, w, theta, W, H):
-    """Soft patch mask for a camera expressed in the incoming mini's local coords."""
+SEAM_R = (1.5, 3.9)                    # seam may wander between these radii (mini-local units)
+SEAM_N = 512                           # seam-cost render size (pixels across the patch)
+
+
+def _hue(nu, ab, freq=1.5):
+    """Display hue phase (colorize's t) after the log-linear colour map; NaN inside."""
+    t = np.full(nu.shape, np.nan); pos = nu > 0
+    t[pos] = (ab[0] * np.log(nu[pos]) + ab[1]) * freq
+    return t
+
+
+def seam(seg, cmap, maxmul, n_ang=720, n_rad=96, bend=0.05, log=print):
+    """Optimal seam (panorama-stitching style): a closed curve r(phi) around the incoming
+    mini, in its local polar coords, along which the outgoing world X and the twin B look
+    most alike. Computed once per swap, so it is fixed in world space and zooms with it."""
+    t0 = time.time()
+    X, M, B = seg["X"], seg["M"], seg["B"]
+    sig, N, R = M["sigma"], SEAM_N, SEAM_R[1]
+    cmapB = (cmap[0] * seg["ab"][0], cmap[0] * seg["ab"][1] + cmap[1])
+    nuX, _ = render_world(X, M["CM"] + sig * PATCH_C, 2 * R * abs(sig), np.angle(sig), N, N, 1, maxmul)
+    nuB, _ = render_world(B, PATCH_C, 2 * R, 0.0, N, N, 1, maxmul)
+    tX, tB = _hue(nuX[..., 0], cmap), _hue(nuB[..., 0], cmapB)
+    diff = 1 - np.cos(2 * np.pi * (tX - tB))                     # 0..2, cyclic hue distance
+    diff[np.isnan(tX) != np.isnan(tB)] = 4.0                     # inside vs outside: worst
+    diff[np.isnan(tX) & np.isnan(tB)] = 0.0
+    # sample on a polar grid (nearest pixel)
+    phi = np.linspace(0, 2 * np.pi, n_ang, endpoint=False)
+    rad = np.linspace(SEAM_R[0], R * 0.98, n_rad)
+    P = rad[None, :] * np.exp(1j * phi[:, None])                 # offsets from PATCH_C
+    ix = np.clip(((P.real + R) / (2 * R) * N).astype(int), 0, N - 1)
+    iy = np.clip(((P.imag + R) / (2 * R) * N).astype(int), 0, N - 1)
+    cost = diff[iy, ix]                                          # (n_ang, n_rad)
+    # closed-loop DP: radius index moves by <= 1 per angle step (each move costs `bend`, so
+    # the seam stays smooth); try every other start radius
+    best = (np.inf, None)
+    for r0 in range(0, n_rad, 2):
+        acc = np.full(n_rad, np.inf); acc[r0] = cost[0, r0]
+        back = np.zeros((n_ang, n_rad), np.int8)
+        for a in range(1, n_ang):
+            cand = np.stack([np.r_[np.inf, acc[:-1]] + bend, acc, np.r_[acc[1:], np.inf] + bend])  # from r-1, r, r+1
+            j = cand.argmin(0); back[a] = j - 1
+            acc = cand[j, np.arange(n_rad)] + cost[a]
+        ends = [r for r in (r0 - 1, r0, r0 + 1) if 0 <= r < n_rad]
+        e = min(ends, key=lambda r: acc[r])
+        if acc[e] < best[0]:
+            path = np.empty(n_ang, int); path[-1] = e
+            for a in range(n_ang - 1, 0, -1):
+                path[a - 1] = path[a] + back[a, path[a]]
+            best = (acc[e], path)
+    r_phi = rad[best[1]]
+    log(f"  seam: mean cost {best[0] / n_ang:.3f} (straight circle {cost.mean(0).min():.3f}),"
+        f" r {r_phi.min():.2f}..{r_phi.max():.2f}  ({time.time() - t0:.1f}s)")
+    return phi, r_phi
+
+
+def patch_weight(center, w, theta, W, H, seam_pr, feather_px=2.5):
+    """Patch mask for a camera in the incoming mini's local coords: 1 inside the seam,
+    0 outside, with a feather of a few *screen* pixels."""
     x = (np.arange(W) + 0.5 - W / 2) * (w / W)
     y = (np.arange(H) + 0.5 - H / 2) * (w / W)
-    C = center + (x[None, :] + 1j * y[:, None]) * np.exp(1j * theta)
-    r = np.abs(C - PATCH_C) / PATCH_R
-    t = np.clip((1 - r) / (1 - INNER), 0, 1)
-    return t * t * (3 - 2 * t)
+    D = center - PATCH_C + (x[None, :] + 1j * y[:, None]) * np.exp(1j * theta)
+    phi, r_phi = seam_pr
+    rs = np.interp(np.angle(D) % (2 * np.pi), np.r_[phi, 2 * np.pi], np.r_[r_phi, r_phi[0]])
+    return np.clip((rs - np.abs(D)) / (feather_px * w / W) + 0.5, 0, 1)
 
 
 def shade(nu, de, ab):
@@ -141,7 +205,7 @@ def run(segs, out_frame, W=640, H=360, ss=2, fps=30, dec_per_s=0.6, swap_px=6.0,
     recs = []; k = 0; t_start = time.time()
     for si, seg in enumerate(segs):
         X, M, Q = seg["X"], seg["M"], seg["Q"]
-        swap_f = None; tail_frames = int(tail_s * fps)
+        swap_f = None; seam_pr = None; tail_frames = int(tail_s * fps)
         while True:
             if budget_s and time.time() - t_start > budget_s:
                 log(f"  render budget hit at frame {k}"); return recs, False
@@ -152,10 +216,11 @@ def run(segs, out_frame, W=640, H=360, ss=2, fps=30, dec_per_s=0.6, swap_px=6.0,
                 sig = M["sigma"]
                 if swap_f is None and 2 * PATCH_R * abs(sig) / w * W >= swap_px:   # patch has grown to swap size
                     swap_f = 0
+                    seam_pr = seam(seg, cmap, maxmul, log=log)
                 if swap_f is not None:
                     cB, wB, thB = (center - M["CM"]) / sig, w / abs(sig), theta - np.angle(sig)
                     a = min(1.0, (swap_f + 1) / fade); a = a * a * (3 - 2 * a)
-                    m = patch_weight(cB, wB, thB, W, H) * a
+                    m = patch_weight(cB, wB, thB, W, H, seam_pr) * a
             # only render each world where it is visible: X outside the solid patch, B inside it
             nuX, deX = render_world(X, center, w, theta, W, H, ss, maxmul, None if m is None else m < 1.0)
             rgb = shade(nuX, deX, cmap)
@@ -178,9 +243,10 @@ def run(segs, out_frame, W=640, H=360, ss=2, fps=30, dec_per_s=0.6, swap_px=6.0,
             if k % 30 == 0:
                 log(f"  frame {k} seg {si} width {w:.2e} {recs[-1]['secs']:.2f}s/frame")
             k += 1
-            # advance the camera toward this segment's dive target (or re-expressed one)
-            tgt = Q if not done_seg else None
+            # advance the camera toward the dive target; on a handoff frame the camera is
+            # already in the next world's coords, so step toward that segment's (nested) target
+            tgt = segs[si + 1]["Q"] if done_seg and si + 1 < len(segs) else Q
             w *= rate
-            if tgt is not None: center = tgt + (center - tgt) * rate
+            center = tgt + (center - tgt) * rate
             if done_seg: break
     return recs, True

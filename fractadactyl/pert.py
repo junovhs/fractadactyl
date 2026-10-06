@@ -36,6 +36,48 @@ def render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need=None):
     return _render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need)
 
 
+@njit(fastmath=False, cache=True)
+def _attracting(Zr, Zi, m0, x0r, x0i, ar, ai, P):
+    """Newton for a period-P point of z -> z^2 + c from the orbit point (phase m0, delta x0).
+    True iff it converges to a cycle whose multiplier |dz_P/dz_0| < 1: an attracting cycle
+    exists only for c in the interior, so the pixel is inside. Converges in a few steps
+    even where the orbit itself would take thousands of periods to settle."""
+    p = Zr.shape[0]
+    first = 0.0; prev = 0.0
+    for it in range(12):
+        m = m0; xr = x0r; xi = x0i
+        Dr = 1.0; Di = 0.0
+        for n in range(P):
+            zr = Zr[m] + xr; zi = Zi[m] + xi
+            t = 2*(zr*Dr - zi*Di); Di = 2*(zr*Di + zi*Dr); Dr = t
+            t = 2*Zr[m]*xr - 2*Zi[m]*xi + xr*xr - xi*xi + ar
+            xi = 2*Zr[m]*xi + 2*Zi[m]*xr + 2*xr*xi + ai
+            xr = t
+            m += 1
+            if m == p: m = 0
+            zr = Zr[m] + xr; zi = Zi[m] + xi
+            if zr*zr + zi*zi > 4.0:
+                return False                 # left the disc: not a cycle point
+            if zr*zr + zi*zi < xr*xr + xi*xi:
+                xr = zr; xi = zi; m = 0
+        rr = (Zr[m] + xr) - (Zr[m0] + x0r); ri = (Zi[m] + xi) - (Zi[m0] + x0i)   # f^P(z) - z
+        er = Dr - 1.0; ei = Di
+        den = er*er + ei*ei
+        if den == 0.0 or not np.isfinite(den):
+            return False
+        sr = (rr*er + ri*ei) / den; si = (ri*er - rr*ei) / den              # step = r / (D - 1)
+        x0r -= sr; x0i -= si
+        st = abs(sr) + abs(si)
+        if it == 0:
+            first = st
+        elif st <= 1e-7 * first or st < 1e-300:
+            return Dr*Dr + Di*Di < 1.0
+        elif it >= 2 and st > 0.5 * prev:
+            return False                     # not converging quadratically: wrong period
+        prev = st
+    return False
+
+
 @njit(parallel=True, fastmath=False, cache=True)
 def _render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need):
     p = Zr.shape[0]
@@ -56,6 +98,8 @@ def _render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need):
                 dr = 0.0; di = 0.0            # dz/dc
                 m = 0; n = 0; r2 = 0.0
                 szr = 0.0; szi = 0.0; chk = 16
+                newton_at = 64                # next n at which a near-return may try Newton
+                tries = 0
                 esc = False
                 while n < maxiter:
                     zr = Zr[m] + xr; zi = Zi[m] + xi       # full z_n
@@ -74,8 +118,14 @@ def _render(Zr, Zi, dcx, dcy, width, rot, W, H, maxiter, ss, need):
                     # rebase (Zhuoran): jump back to reference start
                     if r2 < xr*xr + xi*xi:
                         xr = zr; xi = zi; m = 0
-                    if abs(zr - szr) + abs(zi - szi) < 1e-13*(abs(szr)+abs(szi)) + 1e-300:
+                    dz = abs(zr - szr) + abs(zi - szi); sz = abs(szr) + abs(szi)
+                    if dz < 1e-13*sz + 1e-300:
                         break
+                    # near-return to the saved point: candidate period n - chk/2; confirm by Newton
+                    if tries < 4 and n >= newton_at and dz < 1e-3*sz:
+                        if _attracting(Zr, Zi, m, xr, xi, ar, ai, n - chk // 2):
+                            break
+                        tries += 1; newton_at = 4 * n
                     if n == chk:
                         szr = zr; szi = zi; chk *= 2
                 if esc:

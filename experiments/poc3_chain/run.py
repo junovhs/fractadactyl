@@ -2,8 +2,9 @@ import sys, pathlib; sys.path.insert(0, str(pathlib.Path(__file__).resolve().par
 """PoC 3 (POC-02): chained hidden swaps vs the real ever-deeper path.
 
     python experiments/poc3_chain/run.py [--swaps 5] [--seed 0] [--frames-dir DIR] [--control-budget 2400]
+    python experiments/poc3_chain/run.py --preview [--swaps N]   # 320x180, chain only (1 swap by default)
 
-Writes tests/blind/round3/: chain.mp4, chain_frames.mp4, control.mp4 (as far as its budget
+Writes tests/blind/round4/ (or --out): chain.mp4, chain_frames.mp4, control.mp4 (as far as its budget
 allowed), timing.csv, timing.png, summary.txt, and answer.txt (swap frames, for afterwards).
 """
 import argparse, csv, pickle, subprocess, tempfile, time
@@ -12,16 +13,17 @@ from PIL import Image, ImageDraw
 from fractadactyl import chain, library
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-OUT = REPO / "tests" / "blind" / "round3"
-FONT = r"drawtext=fontfile='C\:/Windows/Fonts/arial.ttf':text='frame %{n}':x=20:y=20:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8"
+_FONTS = ["C\\:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+FONT = ("drawtext=fontfile='" + next((f for f in _FONTS[1:] if pathlib.Path(f).exists()), _FONTS[0])
+        + "':text='frame %{n}':x=20:y=20:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8")
 
 
-def render(name, segs, frames_dir, budget_s=None):
+def render(name, segs, frames_dir, budget_s=None, **kw):
     d = frames_dir / name; d.mkdir(parents=True, exist_ok=True)
     for f in d.glob("f*.png"): f.unlink()
     save = lambda k, rgb: Image.fromarray(rgb).save(d / f"f{k:04d}.png")
     t0 = time.time()
-    recs, finished = chain.run(segs, save, budget_s=budget_s, log=lambda m: print(f"[{name}] {m}", flush=True))
+    recs, finished = chain.run(segs, save, budget_s=budget_s, **kw, log=lambda m: print(f"[{name}] {m}", flush=True))
     print(f"[{name}] {len(recs)} frames in {(time.time()-t0)/60:.1f} min, finished={finished}", flush=True)
     return recs, finished, d
 
@@ -70,20 +72,34 @@ def chart(series, path, W=1200, H=500, pad=60):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--swaps", type=int, default=5); ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--swaps", type=int, default=None, help="default 5 (1 with --preview)"); ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--frames-dir", default=str(pathlib.Path(tempfile.gettempdir()) / "fractadactyl-out" / "poc3"))
     ap.add_argument("--control-budget", type=float, default=2400, help="seconds for control planning+render each")
+    ap.add_argument("--max-twin-p", type=int, default=64, help="twin period limit (bounds per-frame cost)")
+    ap.add_argument("--out", default=str(REPO / "tests" / "blind" / "round4"))
+    ap.add_argument("--preview", action="store_true", help="320x180, chain only, into <out>/preview")
     a = ap.parse_args()
-    OUT.mkdir(parents=True, exist_ok=True); frames_dir = pathlib.Path(a.frames_dir)
+    OUT = pathlib.Path(a.out); frames_dir = pathlib.Path(a.frames_dir)
+    kw = {}
+    if a.preview:
+        OUT = OUT / "preview"; kw = dict(W=320, H=180)
+    a.swaps = a.swaps or (1 if a.preview else 5)
+    OUT.mkdir(parents=True, exist_ok=True)
     lib = library.load()
 
     print("== planning chain (twins)", flush=True)
-    segs, plan_fake = cached_plan(frames_dir / f"plan_chain_s{a.swaps}_seed{a.seed}.pkl",
-                                  lambda: chain.plan(a.swaps, lib, seed=a.seed))
-    recs, _, fdir = render("chain", segs, frames_dir)
+    segs, plan_fake = cached_plan(frames_dir / f"plan_chain_s{a.swaps}_seed{a.seed}_p{a.max_twin_p}.pkl",
+                                  lambda: chain.plan(a.swaps, lib, seed=a.seed, max_twin_p=a.max_twin_p))
+    recs, _, fdir = render("chain", segs, frames_dir, **kw)
     swaps = [r["frame"] for r in recs if r["swap_start"]]
     encode(fdir, OUT / "chain.mp4"); encode(fdir, OUT / "chain_frames.mp4", with_numbers=True)
     (OUT / "answer.txt").write_text("swap fade-in starts at frames: " + ", ".join(map(str, swaps)) + "\n")
+    if a.preview:
+        lines = [f"preview: {len(recs)} frames, swaps at {swaps}"]
+        lines += [f"  seg {s} (world p={segs[s]['X']['p']}): mean {m:.3f} s/frame over {n} frames" for s, m, n in seg_means(recs)]
+        (OUT / "summary.txt").write_text("\n".join(lines) + "\n"); print("\n".join(lines), flush=True)
+        chart([("chain (hidden swaps)", recs, "#1f77b4", swaps)], OUT / "timing.png")
+        return
 
     print("== planning control (real nested minis, no twins)", flush=True)
     csegs, plan_ctl = cached_plan(frames_dir / f"plan_control_s{a.swaps}_seed{a.seed}.pkl",
