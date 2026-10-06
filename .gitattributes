@@ -1,9 +1,0 @@
-/.mcp.json text eol=lf
-/CLAUDE.md text eol=lf
-/AGENTS.md text eol=lf
-/.claude/settings.local.json text eol=lf
-/.claude/.gitignore text eol=lf
-/.codex/.gitignore text eol=lf
-*.ishoo binary
-.ishoo/** binary
-*.mp4 filter=lfs diff=lfs merge=lfs -text

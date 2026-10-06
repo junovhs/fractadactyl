@@ -1,25 +1,16 @@
 # Fractadactyl
 
-Endless-feeling Mandelbrot zoom videos at flat per-frame cost on a laptop, by faking depth
-wherever a viewer can't tell. See [docs/FINDINGS.md](docs/FINDINGS.md).
+Fractadactyl is reset around one goal:
 
-## Layout
-- `fractadactyl/` — renderer and tools
-  - `pert.py` perturbation renderer referenced on a minibrot nucleus (periodic orbit)
-  - `minis.py` find + validate island minibrots (`python -m fractadactyl.minis`)
-  - `swap.py` local-coordinate worlds and swap compositing helpers
-  - `twins.py` twin candidate search and mismatch scoring
-  - `library.py` persistent twin library: `build` once, `pick` a matched twin in seconds
-  - `color.py` placeholder palette (log-iteration hue + distance-estimate shading)
-  - `mb.py` plain double renderer and ball-period helper
-- `experiments/` — the scripts that produced each result
-- `tests/blind/` — blind A/B clips (Git LFS) and their answer keys
-- `data/` — saved search results
+**Make genuine deep Mandelbrot rendering dramatically cheaper by compiling a known zoom path into a bounded, reusable mathematical atlas.**
 
-## Setup
-```
-pip install -r requirements.txt
-git lfs pull
-python -m fractadactyl.minis
-python -m fractadactyl.library build --budget 0 --seed-from data/poc2_twins.pkl   # local twin library (data/twins.npz, not committed)
-```
+The previous twin-minibrot swap prototype is intentionally absent from this branch. It remains in Git history on `ishoo/POC-02` (commit `790be5b`) for reference.
+
+## Start here
+
+1. Read `SPEC.md`.
+2. Read `docs/spec/ARCHITECTURE.md`.
+3. Read `docs/spec/ISHOO-LEDGER.md`.
+4. Read both research reports under `docs/research/`.
+
+This branch is a clean research/spec reset, not a functioning renderer.

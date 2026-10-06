@@ -1,4 +1,0 @@
-numpy>=2.0
-numba>=0.61
-mpmath>=1.3
-pillow>=10

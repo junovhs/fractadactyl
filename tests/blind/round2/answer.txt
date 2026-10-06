@@ -1,1 +1,0 @@
-fake = A  (fade starts frame 115, fully swapped by frame 124)

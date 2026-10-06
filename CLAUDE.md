@@ -1,3 +1,9 @@
-<!-- ishoo:begin -->
-This repository is managed by Ishoo. Before handling the first user request, call the `ishoo_brief` MCP tool. Drive all issue, plan, and decision work through the `ishoo_*` MCP tools — do not substitute the Ishoo command-line interface. A failed call is not a missing server: retry before concluding anything, because a dropped transport usually recovers on the next call. Stop only when a server is not configured at all, or retries keep failing. Before stopping, make in-flight work durable — call `ishoo_stop` on any issue you own, or, when Ishoo itself is the unreachable server, commit your changes onto the current execution branch inside the worktree, never pushing and never touching `main`. Then tell the user which server must be enabled. One exception: in a cloud session where Ishoo is not installed, do not stop — make the requested change on a branch and push only that branch, never `main`; a person finishes it through Ishoo later. How you read and search the code is your own call.
-<!-- ishoo:end -->
+# Agent instructions
+
+This repository is managed by Ishoo. In a local environment with Ishoo available, call `ishoo_brief` before substantive work and reconcile the ledger using `docs/spec/ISHOO-LEDGER.md`.
+
+Before implementation, read `README.md`, `SPEC.md`, all files under `docs/spec/`, and both reports under `docs/research/`.
+
+The old twin/minibrot-swap implementation, experiments, and media were intentionally removed from the working tree. They remain in Git history. Reuse old implementation details only when a new issue explicitly justifies them.
+
+If Ishoo tooling is unavailable, do not claim to update its ledger. Work only on a branch and leave ledger reconciliation for a local agent.

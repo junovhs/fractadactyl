@@ -2,10 +2,11 @@
 **/.ishoo/*.local.toml
 **/.ishoo/cache/
 **/.ishoo/worktrees/
+target/
+out/
+atlas/
+cache/
+.venv/
 __pycache__/
 *.pyc
-out/
-.venv/
-data/twins.npz
-target/
-data/twins.json
+.DS_Store

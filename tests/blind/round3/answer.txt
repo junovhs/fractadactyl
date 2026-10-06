@@ -1,1 +1,0 @@
-clip has 483 frames; hidden swaps (fade start) at frames: [157, 336]
