@@ -1,0 +1,10 @@
+{"cycle_id":1791336022150,"seq":0,"step":"fetch","state":"started","at":"2026-10-07T01:20:22.150165277Z","ref_name":"main"}
+{"cycle_id":1791336022150,"seq":1,"step":"fetch","state":"ok","at":"2026-10-07T01:20:23.585862599Z","ref_name":"origin/main","to_sha":"2216b9b72c7fbf17060cce22398d3f559313e319"}
+{"cycle_id":1791336022150,"seq":2,"step":"fast_forward_main","state":"started","at":"2026-10-07T01:20:23.598533772Z","ref_name":"main","from_sha":"20b294542e702655e6d8f05fb26f86cee99b8bd6"}
+{"cycle_id":1791336022150,"seq":3,"step":"fast_forward_main","state":"ok","at":"2026-10-07T01:20:23.6239487Z","ref_name":"main","from_sha":"20b294542e702655e6d8f05fb26f86cee99b8bd6","to_sha":"2216b9b72c7fbf17060cce22398d3f559313e319"}
+{"cycle_id":1791336022150,"seq":4,"step":"reconcile_store","state":"started","at":"2026-10-07T01:20:23.628201489Z","ref_name":"refs/ishoo/store","from_sha":"09f6b7908ce19a390b52511c2f747f45a7c7b9c9"}
+{"cycle_id":1791336022150,"seq":5,"step":"reconcile_store","state":"failed","at":"2026-10-07T01:20:23.659312762Z","ref_name":"refs/ishoo/store","from_sha":"09f6b7908ce19a390b52511c2f747f45a7c7b9c9","to_sha":"09f6b7908ce19a390b52511c2f747f45a7c7b9c9","detail":"store refs have no common ancestor; cannot 3-way merge"}
+{"cycle_id":1791336045721,"seq":0,"step":"fetch","state":"started","at":"2026-10-07T01:20:45.721032931Z","ref_name":"main"}
+{"cycle_id":1791336045721,"seq":1,"step":"fetch","state":"ok","at":"2026-10-07T01:20:47.011923406Z","ref_name":"origin/main","to_sha":"2216b9b72c7fbf17060cce22398d3f559313e319"}
+{"cycle_id":1791336045721,"seq":2,"step":"reconcile_store","state":"started","at":"2026-10-07T01:20:47.024243114Z","ref_name":"refs/ishoo/store","from_sha":"09f6b7908ce19a390b52511c2f747f45a7c7b9c9"}
+{"cycle_id":1791336045721,"seq":3,"step":"reconcile_store","state":"failed","at":"2026-10-07T01:20:47.051226781Z","ref_name":"refs/ishoo/store","from_sha":"09f6b7908ce19a390b52511c2f747f45a7c7b9c9","to_sha":"09f6b7908ce19a390b52511c2f747f45a7c7b9c9","detail":"store refs have no common ancestor; cannot 3-way merge"}
