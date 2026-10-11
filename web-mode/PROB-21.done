@@ -1,0 +1,16 @@
+STATUS: blocked
+COMMIT: 5197bbd269e5d1706ae7810198d8a9d24ec69058
+SUMMARY: Added mpmath Misiurewicz critical-orbit refinement, exact-decimal coordinates, multiplier and exact rational angle-type validation.
+SUMMARY: Added research-only Euclidean Steiner chord proxy, arm/edge measurements and eight explicit provisional shape thresholds.
+SUMMARY: Added deterministic fd render/shade command generator with exact camera coordinates, width, per-view predicate and owner-review sheet.
+SUMMARY: Added regression tests and a METHOD.md result note; no Rust, dependencies or .ishoo files changed.
+SUMMARY: INCOMPLETE: this is NOT a genuine regulated-arc Hubbard tree; ray landing, true kneading/arm calculation, six valid positive and negative examples for six shapes, and owner visual approval are unproved.
+TESTED: Local Python prototype: four unittest checks passed (i -> candidate 3 arms, -2 -> segment, v0 M(24,2) recurrence below 1e-70, output audit). Prototype generated 54 candidate commands, not 96; missing positives were not fabricated. Committed variant has not been rerun locally. Cargo and fd binaries unavailable in this environment; cargo test, clippy and actual renders NOT run. CLI flags for fd render/shade cross-checked against crates/fd-cli/src/main.rs, render.rs and shade.rs.
+RUN:
+python3 -m unittest discover -s tools/research/shapes -p 'test_*.py'
+cargo test --workspace
+cargo clippy --workspace --all-targets
+python3 tools/research/shapes/hubbard.py --point 0 1 --catalog --out out/prob21 --sheet docs/research/shapes/contact-sheet.md
+cargo build --release -p fd-cli
+bash out/prob21/render.sh
+QUESTIONS: The true Hubbard-tree topology and independent shape corpus require another implementation round; owner can review produced images but that alone cannot discharge the missing mathematical proof. Please send test results and visual votes if you run these commands.
