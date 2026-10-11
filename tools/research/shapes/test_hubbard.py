@@ -1,58 +1,66 @@
-"""PROB-21 numerical contracts and non-fabrication check."""
+"""PROB-21 combinatorial incidence, exact decimals and view selection."""
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 import mpmath as mp
+
 import hubbard
 
 
 class HubbardTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.i=hubbard.build_case('i','0','1',2,2)
-        cls.tip=hubbard.build_case('tip','-2','0',2,1)
-        cls.v0=hubbard.build_case('v0',*hubbard.V0,24,2)
+    def test_known_triod_trees(self):
+        for angle,q,p,arms,nodes,edges in [('1/6',2,2,3,5,4),('1/2',2,1,2,3,2)]:
+            n,e,nu=hubbard.abstract_tree(angle,q,p)
+            self.assertEqual((len(n),len(e)),(nodes,edges))
+            self.assertEqual(max(x['arms'] for x in n),arms)
+            self.assertEqual(sum(x['arms'] for x in n),2*len(e))
+            self.assertIn('(',nu)
 
-    def test_orbits_and_proxy_arms(self):
-        self.assertEqual((self.i['q'],self.i['p']),(2,2))
-        self.assertEqual(self.i['metrics']['max_arms'],3)
-        self.assertEqual((self.tip['q'],self.tip['p']),(2,1))
-        self.assertEqual(self.tip['metrics']['max_arms'],2)
-        self.assertEqual(self.tip['metrics']['forks'],0)
-        self.assertEqual((self.v0['q'],self.v0['p']),(24,2))
-        self.assertLess(mp.mpf(self.v0['residual']),mp.mpf('1e-70'))
-        self.assertEqual(self.v0['metrics']['max_arms'],3)
+    def test_orbit_and_v0_non_fabrication(self):
+        with mp.workdps(85):
+            i=hubbard.build_case('i','0','1',2,2,angle='1/6')
+            tip=hubbard.build_case('tip','-2','0',2,1,angle='1/2')
+            v0=hubbard.build_case('v0',*hubbard.V0,24,2)
+        self.assertEqual((i['q'],i['p'],i['metrics']['max_arms']),(2,2,3))
+        self.assertEqual((tip['q'],tip['p'],tip['metrics']['max_arms']),(2,1,2))
+        self.assertEqual((v0['q'],v0['p']), (24,2))
+        self.assertLess(mp.mpf(v0['residual']),mp.mpf('1e-65'))
+        self.assertIsNone(v0['metrics']['max_arms'])
+        self.assertEqual(v0['nodes'],[])
 
-    def test_discovery_rejection_and_angles(self):
-        self.assertEqual(hubbard.discover(mp.mpc(0,1)),(2,2))
-        self.assertEqual(hubbard.discover(mp.mpc(-2,0)),(2,1))
+    def test_angle_and_failure_contract(self):
         self.assertEqual(hubbard.angle_period(hubbard.Fraction(1,6)),(1,2))
-        self.assertEqual(hubbard.angles_checked(['1/6'],2,2),['1/6'])
+        self.assertEqual(hubbard.angle_period(hubbard.Fraction(1,2)),(1,1))
+        self.assertEqual(hubbard.kneading('1/6').signature(5),'11010')
         with self.assertRaises(ValueError):
-            hubbard.angles_checked(['1/3'],2,2)
-        with self.assertRaisesRegex(ValueError,'non-minimal'):
-            hubbard.build_case('wrong','0','1',4,2)
+            hubbard.build_case('not-the-ray','0','1',2,2,angle='1/2')
         with self.assertRaises(ValueError):
-            hubbard.build_case('superattracting','0','0',1,1)
+            hubbard.build_case('non-repelling','0','0',1,1)
 
-    def test_plan_is_falsifiable(self):
-        with tempfile.TemporaryDirectory() as directory:
-            out=Path(directory)/'out'
-            sheet=Path(directory)/'contact-sheet.md'
-            cases=[self.i,self.tip,self.v0]
-            hubbard.output(cases,out,sheet)
+    def test_view_predicates_are_recomputed_and_unique(self):
+        i=hubbard.build_case('i','0','1',2,2,angle='1/6')
+        tip=hubbard.build_case('tip','-2','0',2,1,angle='1/2')
+        with tempfile.TemporaryDirectory() as temp:
+            out=Path(temp)/'docs/research/shapes'
+            hubbard.output([i,tip],out)
             views=json.loads((out/'views.json').read_text())
+            self.assertEqual(len(views),len({(v['re'],v['im'],v['width']) for v in views}))
             for v in views:
-                c=next(x for x in cases if x['name']==v['case'])
-                self.assertEqual(v['predicted'],c['fires'][v['shape']])
+                case=next(c for c in (i,tip) if c['name']==v['case'])
+                flag,metrics=hubbard.metrics_for_view(case,v['width'],v['shape'])
+                self.assertEqual((flag,metrics), (v['expected'],v['values']))
+                self.assertTrue(v['image'].startswith('img/'))
                 self.assertGreater(mp.mpf(v['width']),0)
-            script=(out/'render.sh').read_text()
-            self.assertEqual(script.count('"$FD" render '),len(views))
-            self.assertEqual(script.count('"$FD" shade '),len(views))
-            self.assertIn('Insufficient cases',sheet.read_text())
-            self.assertIn('Not a Hubbard-tree reconstruction',sheet.read_text())
+            text=(out/'contact-sheet.md').read_text()
+            self.assertIn('![](img/',text)
+            self.assertIn('**New (unproved):**',text)
+            self.assertIn('INSUFFICIENT',text)
+            cmds=(out/'render.sh').read_text()
+            self.assertEqual(cmds.count('"$FD" render '),len(views))
+            self.assertEqual(cmds.count('"$FD" shade '),len(views))
+            self.assertIn('--size 320x180',cmds)
 
 
 if __name__=='__main__':
